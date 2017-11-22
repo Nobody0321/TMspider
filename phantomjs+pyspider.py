@@ -1,10 +1,5 @@
-#!/usr/bin/env python3
-# -*- encoding: utf-8 -*-
-# Created on 2017-11-14 14:34:10
-# Project: ThreatMiner
-
-from pyspider.database.mysql.mysqldb import SQL
-from fake_useragent import UserAgent
+from pyspider.database.mysql.mysqldb import SQL # uesd to import data into MySQL database
+from fake_useragent import UserAgent    # used to 
 from pyspider.libs.base_handler import *
 from pyquery import PyQuery as pq
 from lxml import etree
@@ -13,47 +8,51 @@ class Handler(BaseHandler):
     crawl_config = {
     }
 
-    @every(minutes= 7*24*60) #一周一次
+    @every(minutes= 7*24*60) # every week
     def on_start(self):
-        ua = UserAgent() # 使用随机的ua
+        ua = UserAgent() # using random UA
         header = {  
             'user-agent': ua.chrome,
             'cookie': '__cfduid=d0ee9730b3217a46db01739bcc14b5f3e1510043552; PHPSESSID=clejom8trjpt12cnck9afhadi4'
                     }
-        self.crawl('https://www.threatminer.org/getReport.php?e=report_list_container&t=0&q=2017',callback=self.index_page, validate_cert=False,headers = header)
+        # crawl reports list in 2017
+        self.crawl('https://www.threatminer.org/getReport.php?e=report_list_container&t=0&q=2017',callback=self.index_page, validate_cert=False,headers = header,auto_recrawl=True)
 
-    @config(age= 78 * 24 * 60 * 60)#一周一次
     def index_page(self, response):
-        ua = UserAgent() # 使用随机的ua
+        ua = UserAgent() # using random UA
         header = {  
             'referer': 'https://www.threatminer.org',
             'user-agent': ua.chrome,
             'cookie': '__cfduid=d0ee9730b3217a46db01739bcc14b5f3e1510043552; PHPSESSID=clejom8trjpt12cnck9afhadi4'
                     }
         pqObj = pq(response.content)
-        #different type of entry Urls should be handled by different methods 
+        itags = next(pqObj("table[class='table table-bordered table-hover table-striped']").find("a[href^='report']").items()).text()
+        # different type of entry Urls should be handled by different methods 
+        # itag use the title of the first  report to identity whether the website has been updated 
         for each in pqObj('a[href^="domain.php?q="]').items():
-            self.crawl('https://www.threatminer.org/'+ each.attr.href, fetch_type='js',callback=self.domain_index_page,headers = header, validate_cert=False)
+            self.crawl('https://www.threatminer.org/'+ each.attr.href, itag =itags ,callback=self.domain_index_page,headers = header, validate_cert=False,fetch_type='js')
             
         for each in pqObj('a[href^="host.php?q="]').items():
-            self.crawl('https://www.threatminer.org/'+each.attr.href, fetch_type='js',callback=self.host_index_page,headers = header)
+            self.crawl('https://www.threatminer.org/'+each.attr.href,  itag = itags, fetch_type='js',callback=self.host_index_page,headers = header)
             
         for each in pqObj('a[href^="sample.php?q="]').items():
-            self.crawl('https://www.threatminer.org/'+each.attr.href, fetch_type='js',callback=self.sample_index_page,headers = header)
-            
+            self.crawl('https://www.threatminer.org/'+each.attr.href, itag = itags, fetch_type='js',callback=self.sample_index_page,headers = header)
+
 
     def domain_index_page(self, response):
         domain_info =  {
             "name":response.url[41:]
                 }
-        ua = UserAgent() # 使用随机的ua
+        ua = UserAgent() # use randon UA
         header = {  
             'referer': response.url,
             'user-agent': ua.firefox,
             'cookie': '__cfduid=d2d01e0d2940fe70f3713db86739539811508833807; PHPSESSID=6konc53n5mupql9fn3orau52h2'
                     }
         pqObj = pq(response.content)
-        #get uri
+        
+        # get uri
+        # use uri_exist to identity whether the corresponding table exists
         uri_exist= pqObj("div[id = 'uri_container']").text()
         if uri_exist != 'No results found.':
             self.crawl("https://www.threatminer.org/getData.php?e=uri_container&q="+domain_info["name"]+"&t=0&rt=3&p=1",callback = self.domain_uri,headers = header, validate_cert=False)
@@ -70,16 +69,14 @@ class Handler(BaseHandler):
         
         #get whoisserver
         #get email
-            self.crawl("https://www.threatminer.org/getData.php?e=metadata_container&q="+domain_info["name"]+"&t=0&rt=4&p=1",callback = self.domain_info,headers = header, validate_cert=False)     
-
-        #return info
+        self.crawl("https://www.threatminer.org/getData.php?e=metadata_container&q="+domain_info["name"]+"&t=0&rt=4&p=1",callback = self.domain_info,headers = header, validate_cert=False)     
 
 
     def host_index_page(self, response):
         host_info =  {
             "name":response.url[39:]
                 }
-        ua = UserAgent()#使用随机的ua
+        ua = UserAgent()# using random UA
         header = {  
             'referer': response.url,
             'user-agent': ua.firefox,
@@ -104,7 +101,7 @@ class Handler(BaseHandler):
         sample_info =  {
             "name":response.url[41:]
                 }
-        ua = UserAgent()#使用随机的ua
+        ua = UserAgent()# using random UA
         header = {  
             'referer': response.url,
             'user-agent': ua.firefox,
@@ -281,10 +278,20 @@ class Handler(BaseHandler):
         if not result:
             return
         sql = SQL()
-        type = result.pop('type')
-        if type == 'domain':
-            sql.insert(tablename='Domains',**result)  
-        elif type == 'host':
-            sql.insert(tablename='Hosts',**result)  
-        elif type == 'sample':
-            sql.insert(tablename='Samples',**result)   
+        if isinstance(result,dict):
+            entrytype = result.pop('type')
+            if entrytype == 'domain':
+                sql.insert(tablename='Domains',**result)  
+            elif entrytype == 'host':
+                sql.insert(tablename='Hosts',**result)  
+            elif entrytype == 'sample':
+                sql.insert(tablename='Samples',**result)   
+        elif isinstance(result,list):
+            for each in result:
+                entrytype = each.pop('type')
+                if entrytype == 'domain':
+                    sql.insert(tablename='Domains',**each)  
+                elif entrytype == 'host':
+                    sql.insert(tablename='Hosts',**each)  
+                elif entrytype == 'sample':
+                    sql.insert(tablename='Samples',**each)   
